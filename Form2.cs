@@ -65,6 +65,7 @@ namespace Petit4Tablet
         private void ThreadFunc()
         {
             int releaseCounter = 0;
+            long lastValueToSend = 0;
             while (true)
             {
                 if (!m_port.IsOpen)
@@ -76,7 +77,7 @@ namespace Petit4Tablet
                 if (m_valueToSend == 0)
                 {
                     Thread.Sleep(4);
-                    if (releaseCounter-- == 0)
+                    if (--releaseCounter == 0)
                     {
                         SendRelease();
                     }
@@ -85,13 +86,14 @@ namespace Petit4Tablet
 
                 if (m_valueToSend < 0) break;
 
-                if (m_active)
+                if (m_active && lastValueToSend != m_valueToSend)
                 {
+                    lastValueToSend = m_valueToSend;
                     try
                     {
                         m_port.Write(CreateP4SendPacket(m_valueToSend), 0, 12);
                         m_numSent++;
-                        releaseCounter = 50;
+                        releaseCounter = 30;
                     }
                     catch
                     {
@@ -118,8 +120,12 @@ namespace Petit4Tablet
         private void SendRelease()
         {
             if (!m_port.IsOpen) return;
-            byte[] relSeq = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-            m_port.Write(relSeq, 0, 12);
+            try
+            {
+                byte[] relSeq = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                m_port.Write(relSeq, 0, 12);
+            }
+            catch { }
         }
 
 
@@ -173,6 +179,10 @@ namespace Petit4Tablet
             m_context = WintabDN.CWintabInfo.GetDefaultDigitizingContext(
                 WintabDN.ECTXOptionValues.CXO_MESSAGES
             );
+            m_context.OutOrgX = 0;
+            m_context.OutOrgY = 0;
+            m_context.OutExtX = 1280;
+            m_context.OutExtY = 720;
             m_context.PktRate = 60;
             m_maxPressure = WintabDN.CWintabInfo.GetMaxPressure();
 
@@ -204,7 +214,6 @@ namespace Petit4Tablet
 
         private void OnReceivedWTPacket(Object sender, WintabDN.MessageReceivedEventArgs eventArgs)
         {
-            if (!m_formActive) return;
             if (m_data == null) return;
 
             uint nPackets = 0;
@@ -215,9 +224,13 @@ namespace Petit4Tablet
             if (pkt.pkContext == 0) return;
 
             int p = pkt.pkNormalPressure.pkRelativeNormalPressure * 255 / m_maxPressure;
-            int x = (int)(Cursor.Position.X * m_zoom), y = (int)(Cursor.Position.Y * m_zoom);
+            int x = pkt.pkX, y = 719 - pkt.pkY;
             m_valueToSend = CreateHash(x, y, p, (int)pkt.pkButtons & 1, ((int)pkt.pkButtons >> 1) & 1);
-            tabletInput.Text = string.Format("T: {4}, X: {0}, Y: {1}, P: {2}, B: {3}", x, y, p, pkt.pkButtons, m_numSent);
+            tabletInput.Text = string.Format("X:{1}, Y:{2}, Z:{3}, P:{4}, B:{5}\nPitch:{6}, Yaw:{7}, Roll:{8}\nAltitude:{9}, Azimuth:{10}, Twist:{11}",
+                0, x, y, pkt.pkZ, p, pkt.pkButtons,
+                pkt.pkRotation.rotPitch, pkt.pkRotation.rotYaw, pkt.pkRotation.rotRoll, 
+                pkt.pkOrientation.orAltitude, pkt.pkOrientation.orAzimuth, pkt.pkOrientation.orTwist
+            );
         }
 
         private long CreateHash(int tX, int tY, int tP, int b0, int b1)
